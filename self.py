@@ -29,6 +29,7 @@ def readpdb(filename, atoms):
                 line = f.readline()
         while (line != ''):
             if line[:6]=="ATOM  ":
+                switch = 1
                 no = int(line[6:11])
                 name = line[12:16]
                 res = line[17:20]
@@ -38,15 +39,20 @@ def readpdb(filename, atoms):
                 coord = []
                 for i in coords:
                     coord.append(float(i))
-            elif line[:6]=="ANISOU":
+            elif line[:6]=="ANISOU" and switch == 1:
+                switch = 0
                 anisos = line[28:70].split()
                 aniso = []
                 for i in anisos:
                     aniso.append(float(i)*0.0001)
-                atom = Atom(no, name, res, chain, resNo, coord, aniso)
-                atoms.append(atom)
-                if name == ' OXT':
-                    break
+                tmp = []
+                init(tmp, 3)
+                unpack(tmp, aniso)
+                if(np.linalg.det(tmp) > 0.0):
+                    atom = Atom(no, name, res, chain, resNo, coord, aniso)
+                    atoms.append(atom)
+#                if name == ' OXT':
+#                    break
             line = f.readline()
     f.closed
     return
@@ -66,7 +72,18 @@ def readtls(filename, tls):
 def writeout(filename, out):
     with open(filename, "w") as f:
         for i in range(0, len(out)):
-            print>>f, out[i]
+            if out[i]!=[]:
+                for j in range(0, len(out[i])):
+                    if(j != len(out[i])-1):
+                        s1 = str(out[i][j][0])
+                        s2 = str(out[i][j][1])
+                        s3 = str(i)
+                        f.write(s3+'-'+s1+' '+s2+' ')
+                    else:
+                        s1 = str(out[i][j][0])
+                        s2 = str(out[i][j][1])
+                        s3 = str(i)
+                        f.write(s3+'-'+s1+' '+s2+'\n')
     f.closed
     return
 
@@ -79,10 +96,10 @@ def distance(a, b):
 def dkl(i, j):
     r = -1.5
     for p in range(0, 3):
-        r += 0.5*math.log(i[0][p]/j[0][p])
-    for p in range(0, 3):
-        for q in range(0, 3):
-            r += 0.5*(i[0][p]/i[0][q])*pow(np.dot(j[1][p], i[1][q]), 2)
+        r += 0.5*math.log(j[0][p]/i[0][p])
+    for k in range(0, 3):
+        for l in range(0, 3):
+            r += 0.5*(i[0][k]/j[0][l])*pow(np.dot(i[1][k], j[1][l]), 2)
     return r
 def unpack(u, aniso):
     u[0][0] = aniso[0]
@@ -125,9 +142,9 @@ def main(argv):
             inputtlsfile = arg
         elif opt in ("-o", "--ofile"):
             outputfile = arg
-    print 'Input file is "', inputpdbfile
-    print 'Input tls file is "', inputtlsfile 
-    print 'Output file is "', outputfile
+#    print 'Input file is "', inputpdbfile
+#    print 'Input tls file is "', inputtlsfile 
+#    print 'Output file is "', outputfile
     atoms = [ ]
     readpdb(inputpdbfile, atoms)
     contact = []
@@ -137,7 +154,7 @@ def main(argv):
         contact.append([])
         for j in range(i+1, len(atoms)):
             di = distance(atoms[i].coord, atoms[j].coord)
-            if di <= 5.0:
+            if 0 < di < 5.0:
                 contact[i].append([j, di])
     for i in range(0, len(atoms)):
         u = []
@@ -149,14 +166,16 @@ def main(argv):
             k = contact[i][j][0]
             r = contact[i][j][1]
             kldist = dkl(atoms[i].eig, atoms[k].eig)+dkl(atoms[k].eig, atoms[i].eig) 
-            kldist *= 1.0/(2*r)
+            kldist /= 2.0*r
             contact[i][j].append(kldist)
 #    for i in range(0, len(contact)):
 #        for j in range(0, len(contact[i])):
 #            print i, contact[i][j][0], contact[i][j][2], '\n'
     tls = []
     readtls(inputtlsfile, tls)
-    print tls
+    if len(tls)==1:
+        print "No boundary effect because there is only one tls group"
+        exit()
 
     dklinside = []
     dklboundary = []
@@ -168,18 +187,34 @@ def main(argv):
     dklb = []
     switch = 0
     instat = 0
+    chain=[]
+    for i in range(0, len(tls)):
+        if i==0:
+            chain.append(tls[i][0])
+        else:
+            for j in range(0, len(chain)):
+                if tls[i][0]!=chain[j] and j==len(chain) - 1:
+                    chain.append(tls[i][0]) 
+    chainlength = [0]
+    lengthtmp=0
+    for i in range(0, len(chain)):
+        for j in range(0, len(tls)):
+            if(tls[j][0]==chain[i]):
+                lengthtmp += 1
+        chainlength.append(lengthtmp)
 
+#    pdb.set_trace()
     for i in range(0, len(tls)):
         for j in range(0, len(contact)):
             low = atoms[j].resNo - tls[i][1]
             high = atoms[j].resNo - tls[i][2]
             if low < 0:
                 pass
-            elif low >= 0 and high <= 0:
+            elif low >= 0 and high <= 0 and atoms[j].chain==tls[i][0]:
                 for k in range(0, len(contact[j])):
                     pos = contact[j][k][0]
                     for i1 in range(0, len(tls)):
-                        if atoms[pos].resNo - tls[i1][1] >= 0 and atoms[pos].resNo - tls[i1][2] <= 0:
+                        if atoms[pos].resNo - tls[i1][1] >= 0 and atoms[pos].resNo - tls[i1][2] <= 0 and atoms[pos].chain==tls[i1][0]:
                             if i1==i:
                                 dkli += contact[j][k][2]
                                 instat += 1
@@ -202,19 +237,8 @@ def main(argv):
                                         else:
                                             j1 += 1
                                     break
-#                    if len(dklboundary[i])==0 and switch==1:
-#                        dklboundary[i].append(dklb)
-#                        print dklboundary[i][0]
-#                    elif len(dklboundary[i])!=0 and switch==1:
-#                        for j1 in range(0, len(dklboundary[i])):
-#                            if dklb[0]==dklboundary[i][j1][0]:
-#                                print dklboundary[i][j1][0], dklb[0]
-#                                dklboundary[i][j1][1] += dklb[1]
-#                            else:
-#                                dklboundary[i].append(dklb)
-#                                print dklb, 2
             elif high > 0:
-                break
+                pass
         dklinside[i] = dkli
         insidestat[i] = instat
         dklboundary[i] = dklb
@@ -222,18 +246,40 @@ def main(argv):
         instat = 0
         switch = 0
         dklb = []
+        dklinsideav = 0.0
     for i in range(0, len(dklinside)):
-        print dklinside[i], insidestat[i], dklinside[i]/insidestat[i]
+        if insidestat[i] != 0:
+#            print dklinside[i], insidestat[i], dklinside[i]/insidestat[i]
+            dklinside[i] /= insidestat[i]
+            dklinsideav += dklinside[i]
+    dklinsideav /= len(dklinside)
+    print dklinsideav
+    dklboundaryav = []
+    dklboundaryavtmp = 0.0
     for i in range(0, len(dklboundary)):
         for j in range(0, len(dklboundary[i])):
             dklboundary[i][j].append(dklboundary[i][j][1]/dklboundary[i][j][2])
-    for i in range(0, len(dklboundary)):
-        print dklboundary[i]
+            dklboundaryavtmp += dklboundary[i][j][3]
+            if j == len(dklboundary[i]) - 1:
+                dklboundaryavtmp /= len(dklboundary[i])
+                dklboundaryav.append(dklboundaryavtmp)
+                dklboundaryavtmp = 0.0
+    for i in range(0, len(dklboundaryav)):
+        dklboundaryavtmp += dklboundaryav[i]
+#        print i, dklboundaryav[i]
+    dklboundaryavtmp /= len(dklboundary)
+    print dklboundaryavtmp
+#    for i in range(0, len(dklboundary)):
+#        print dklboundary[i]
     bklstat = []
     initdkl(bklstat, len(tls))
     for i in range(0, len(dklinside)-1):
+        #        if dklinside[i] >= 1.0E-4:
         for j in range(0, len(dklboundary[i])):
-            bkltmp = dklboundary[i][j][3]/dklinside[i]*insidestat[i]
+            pos = dklboundary[i][j][0]
+            bkltmp = dklboundary[i][j][3]/dklinside[pos]
+            bkltmp += dklboundary[i][j][3]/dklinside[i]
+            bkltmp /= 2.0
             bklstat[i].append([dklboundary[i][j][0], bkltmp])
     writeout(outputfile, bklstat)
     bklav = 0.0
@@ -242,9 +288,11 @@ def main(argv):
         for j in range(0, len(bklstat[i])):
             bklav += bklstat[i][j][1]
             bkln += 1
-    bklav /= bkln
+    if bkln != 0:
+        bklav /= bkln
 
-    print bklav, bkln
+    print bklav
+    print bkln
             
     contactsum = 0
     for i in range(0, len(contact)):
@@ -254,6 +302,8 @@ def main(argv):
     contactsum = 0
     for i in range(0, len(insidestat)):
         contactsum += insidestat[i]
+        print dklboundary[i]
+        print dklinside[i]
         for j in range(0, len(dklboundary[i])):
             contactsum += dklboundary[i][j][2]
     print contactsum
